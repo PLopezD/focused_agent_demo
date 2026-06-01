@@ -60,6 +60,7 @@ def main():
 
         **Key Features:**
         - 🔐 Secure customer authentication
+        - 🔒 PII Redaction Middleware for user privacy
         - 🎵 Personalized music recommendations
         - 📋 Order history and billing support
         - 📊 Full LangSmith monitoring
@@ -83,8 +84,6 @@ def main():
         - `bjorn.hansen@yahoo.no`
         - `frantisekw@jetbrains.com`
         """)
-
-    # Main chat interface
 
     # Always display welcome message as the first message
     with st.chat_message("assistant"):

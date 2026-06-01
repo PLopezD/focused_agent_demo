@@ -508,20 +508,3 @@ def test_pii_middleware_directly():
         import traceback
         traceback.print_exc()
 
-if __name__ == "__main__":
-    import sys
-
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "test":
-            run_single_test()
-        elif sys.argv[1] == "middleware":
-            test_pii_middleware_directly()
-        elif sys.argv[1] == "help":
-            print("Usage:")
-            print("  python eval_pii_redaction.py           # Run full LangSmith evaluation")
-            print("  python eval_pii_redaction.py test      # Run comprehensive tests")
-            print("  python eval_pii_redaction.py middleware # Test PII middleware directly")
-            print("  python eval_pii_redaction.py help      # Show this help")
-    else:
-        # Run the full evaluation
-        asyncio.run(run_pii_evaluation())

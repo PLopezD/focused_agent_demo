@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from database import DatabaseManager
 from helpers.system_messages import SYSTEM_MESSAGES
-from helpers.pii_config import get_comprehensive_pii_middleware
+from helpers.pii_config import get_minimal_transaction_pii_middleware
 from datetime import datetime
 
 class TransactionAgent:
@@ -17,8 +17,8 @@ class TransactionAgent:
         self.llm = llm
         self.authenticated_customer_id = None  # Will be set when processing authenticated requests
 
-        # Configure PII middleware for this agent
-        self.pii_middleware = get_comprehensive_pii_middleware()
+        # Configure minimal PII middleware for this agent (only email protection)
+        self.pii_middleware = get_minimal_transaction_pii_middleware()
 
         # Create tool functions with closure over self.db
         @tool

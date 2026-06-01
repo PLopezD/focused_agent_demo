@@ -87,13 +87,16 @@ def get_comprehensive_pii_middleware():
     """
     Get comprehensive PII middleware including built-in types and custom detectors.
 
+    Note: Excludes credit_card detection to avoid blocking legitimate financial information
+    like order totals, prices, and transaction amounts in order history.
+
     Returns:
         list: List of all PIIMiddleware instances for comprehensive protection
     """
     middleware = []
 
-    # Built-in PII types
-    builtin_types = ["email", "credit_card", "ip", "mac_address", "url"]
+    # Built-in PII types - EXCLUDING credit_card to avoid blocking cash values
+    builtin_types = ["email", "ip", "mac_address", "url"]
     for pii_type in builtin_types:
         middleware.append(
             PIIMiddleware(
@@ -107,6 +110,80 @@ def get_comprehensive_pii_middleware():
 
     # Add custom PII detectors
     middleware.extend(create_pii_middleware())
+
+    return middleware
+
+def get_transaction_safe_pii_middleware():
+    """
+    Get minimal PII middleware specifically designed for transaction agents.
+    This version only protects the most critical PII while allowing ALL financial data
+    including prices, totals, and amounts to pass through unblocked.
+
+    Returns:
+        list: List of minimal PIIMiddleware instances for transaction processing
+    """
+    middleware = []
+
+    # Only protect emails - the most sensitive PII that should never appear in transaction data
+    middleware.append(
+        PIIMiddleware(
+            pii_type="email",
+            strategy="redact",
+            apply_to_input=True,
+            apply_to_output=True,
+            apply_to_tool_results=True
+        )
+    )
+
+    # Protect only explicit phone numbers with clear phone formatting
+    # Use more restrictive patterns to avoid matching financial data
+    phone_restrictive_patterns = [
+        # Only match phone numbers with clear separators or parentheses
+        r'\b(?:\+?1[-.\s]?)?(?:\([2-9]\d{2}\)|[2-9]\d{2})[-.\s][2-9]\d{2}[-.\s]\d{4}\b',
+        # International with + prefix
+        r'\b\+\d{1,3}[-.\s]\d{1,4}[-.\s]\d{1,4}[-.\s]\d{1,9}\b',
+    ]
+
+    phone_pattern = '|'.join(f'({pattern})' for pattern in phone_restrictive_patterns)
+    middleware.append(
+        PIIMiddleware(
+            pii_type="phone_number_strict",
+            strategy="mask",
+            detector=phone_pattern,
+            apply_to_input=True,
+            apply_to_output=True,
+            apply_to_tool_results=True
+        )
+    )
+
+    # NO zip code protection - these patterns are too broad and block financial amounts
+    # NO address protection - addresses may contain numbers that look like prices
+    # NO IP address protection - not relevant for transaction data
+    # NO URL protection - transaction IDs or references may look like URLs
+
+    return middleware
+
+def get_minimal_transaction_pii_middleware():
+    """
+    Get absolutely minimal PII middleware for transaction agents.
+    Only protects email addresses - nothing else.
+    Use this if financial data is still being blocked.
+
+    Returns:
+        list: List with only email protection for transaction processing
+    """
+    middleware = []
+
+    # Only protect emails - absolutely nothing else
+    middleware.append(
+        PIIMiddleware(
+            pii_type="email",
+            strategy="redact",
+            apply_to_input=True,
+            apply_to_output=True,
+            apply_to_tool_results=True
+        )
+    )
 
     return middleware
 

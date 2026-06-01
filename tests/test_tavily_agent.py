@@ -2,7 +2,7 @@
 """
 Test script for the enhanced TavilyAgent class.
 """
-
+from pathlib import Path
 import asyncio
 import os
 import pytest
@@ -95,5 +95,17 @@ def test_tavily_agent_initialization():
     from langchain_openai import ChatOpenAI
     llm = ChatOpenAI(model="gpt-4o-mini")
     agent2 = TavilyAgent(llm=llm)
+
     assert agent2 is not None
     assert agent2.llm == llm
+
+    # def generate_graph_image(graph):
+    #     try:
+    #         png_bytes = graph.get_graph().draw_mermaid_png()
+    #         Path("tavily_graph.png").write_bytes(png_bytes)
+    #         print("✅ Graph image generated successfully")
+    #     except Exception as e:
+    #         print(f"⚠️  Graph image generation skipped due to: {e}")
+
+    # # Safely try to generate graph image
+    # generate_graph_image(agent2.workflow)
