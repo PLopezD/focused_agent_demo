@@ -13,6 +13,12 @@ pgrep -li lang
 
 
 
+  docker build -t langchain-music-store .
+  docker run -p 8501:8501 langchain-music-store
+
+
+
+
 tradeoff:
     - why gpt-4o-mini?
     - ive done rag differently - with embeddings
