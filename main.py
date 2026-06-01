@@ -86,7 +86,6 @@ def main():
         """)
 
     # Main chat interface
-    st.header("💬 Chat Interface")
 
     # Always display welcome message as the first message
     with st.chat_message("assistant"):

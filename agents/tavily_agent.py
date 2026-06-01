@@ -14,6 +14,7 @@ from openevals.prompts import (
     RAG_RETRIEVAL_RELEVANCE_PROMPT,
     RAG_HELPFULNESS_PROMPT,
 )
+from helpers.pii_config import get_comprehensive_pii_middleware
 
 def get_model():
     """Get or create the ChatOpenAI model instance."""
@@ -38,8 +39,6 @@ def get_evaluators():
     model = get_model()
     if model is None:
         return None, None
-    print("current_date!!")
-    print(current_date)
     try:
         relevance_evaluator = create_async_llm_as_judge(
             judge=model,
@@ -256,6 +255,9 @@ class TavilyAgent:
         self.llm = llm or get_model()
         self.workflow = agent
 
+        # Configure PII middleware for this agent
+        self.pii_middleware = get_comprehensive_pii_middleware()
+
     async def search_async(self, message: str) -> str:
         """
         Async search method that uses the full RAG workflow with relevance filtering and reflection.
@@ -335,3 +337,7 @@ Your workflow includes:
 - Automatic retry with refined queries if needed (up to 3 attempts)
 
 Always strive to provide accurate, current, and helpful information based on reliable web sources."""
+
+    def get_pii_middleware(self):
+        """Return the list of PII middleware for this agent."""
+        return self.pii_middleware

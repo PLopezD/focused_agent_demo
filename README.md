@@ -33,14 +33,13 @@ with more time
     - improve flow of tool selection, right now doing string search is not great
     - summarization after 15-20 messages 
     - spent more time with our database patterns including using something like postgres 
-    - code cleanup
-    - add middleware for non-dry things
+    - code cleanup (class inheritence, be more DRY, various middlewares)
 
 
 PLD todo 
 - find out why rag is not further filtering when it has a good answer --- xxxx
-- write dockerfile ---
-- add pii middleware --- 
+- write dockerfile --- xxx
+- add pii middleware --- xxx
 - add eval dataset --- 
 - sort out music suggestion algo - xxxx
 

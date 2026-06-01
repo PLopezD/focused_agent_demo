@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from database import DatabaseManager
 from helpers.system_messages import SYSTEM_MESSAGES
+from helpers.pii_config import get_comprehensive_pii_middleware
 from datetime import datetime
 
 class TransactionAgent:
@@ -15,6 +16,9 @@ class TransactionAgent:
         self.db = db_manager
         self.llm = llm
         self.authenticated_customer_id = None  # Will be set when processing authenticated requests
+
+        # Configure PII middleware for this agent
+        self.pii_middleware = get_comprehensive_pii_middleware()
 
         # Create tool functions with closure over self.db
         @tool
@@ -213,3 +217,7 @@ Use the available tools to get accurate transaction data for each customer query
     def get_tools(self):
         """Return the list of tools available to this agent."""
         return self.tools
+
+    def get_pii_middleware(self):
+        """Return the list of PII middleware for this agent."""
+        return self.pii_middleware

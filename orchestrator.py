@@ -9,7 +9,8 @@ from datetime import datetime
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import create_react_agent, ToolNode
+from langchain.agents import create_agent
+from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel
 
@@ -342,10 +343,11 @@ class MusicStoreOrchestrator:
             if state.authenticated and state.customer_id:
                 self.music_agent.set_authenticated_customer(state.customer_id)
 
-            # Create agent executor with tools (without system_message parameter)
-            agent_executor = create_react_agent(
-                self.llm,
-                self.music_agent.get_tools()
+            # Create agent executor with tools and PII middleware
+            agent_executor = create_agent(
+                model=self.llm,
+                tools=self.music_agent.get_tools(),
+                middleware=self.music_agent.get_pii_middleware()
             )
 
             # Get the latest user message
@@ -353,7 +355,7 @@ class MusicStoreOrchestrator:
             if not user_messages:
                 return self._add_no_message_error(state)
 
-            # Prepare input with customer context and system message
+            # Prepare input with system message and customer context
             messages = [
                 self.music_agent.get_system_message(),
                 self._create_customer_context_message(state),
@@ -382,10 +384,11 @@ class MusicStoreOrchestrator:
             if state.authenticated and state.customer_id:
                 self.transaction_agent.set_authenticated_customer(state.customer_id)
 
-            # Create agent executor with tools
-            agent_executor = create_react_agent(
-                self.llm,
-                self.transaction_agent.get_tools()
+            # Create agent executor with tools and PII middleware
+            agent_executor = create_agent(
+                model=self.llm,
+                tools=self.transaction_agent.get_tools(),
+                middleware=self.transaction_agent.get_pii_middleware()
             )
 
             # Get the latest user message
@@ -393,7 +396,7 @@ class MusicStoreOrchestrator:
             if not user_messages:
                 return self._add_no_message_error(state)
 
-            # Prepare input with customer context and system message
+            # Prepare input with system message and customer context
             messages = [
                 self.transaction_agent.get_system_message(),
                 self._create_customer_context_message(state),
@@ -422,10 +425,11 @@ class MusicStoreOrchestrator:
             if state.authenticated and state.customer_id:
                 self.support_agent.set_authenticated_customer(state.customer_id)
 
-            # Create agent executor with tools - same pattern as transaction agent
-            agent_executor = create_react_agent(
-                self.llm,
-                self.support_agent.get_tools()
+            # Create agent executor with tools and PII middleware
+            agent_executor = create_agent(
+                model=self.llm,
+                tools=self.support_agent.get_tools(),
+                middleware=self.support_agent.get_pii_middleware()
             )
 
             # Get the latest user message
@@ -433,7 +437,7 @@ class MusicStoreOrchestrator:
             if not user_messages:
                 return self._add_no_message_error(state)
 
-            # Prepare input with customer context and system message
+            # Prepare input with system message and customer context
             messages = [
                 self.support_agent.get_system_message(),
                 self._create_customer_context_message(state),

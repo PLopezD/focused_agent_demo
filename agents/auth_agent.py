@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END, START
 from pydantic import BaseModel
+from helpers.pii_config import get_comprehensive_pii_middleware
 
 
 class AuthRoutingState(BaseModel):
@@ -28,6 +29,9 @@ class AuthenticationAgent:
     def __init__(self, llm: ChatOpenAI = None):
         self.llm = llm
         self.authenticated_customer_id = None
+
+        # Configure PII middleware for this agent
+        self.pii_middleware = get_comprehensive_pii_middleware()
         self.fallback_mode = llm is None
 
         try:
@@ -320,3 +324,7 @@ You have access to three specialized agents:
 
 Analyze requests carefully and route them to the most appropriate agent based on the user's intent.
 """)
+
+    def get_pii_middleware(self):
+        """Return the list of PII middleware for this agent."""
+        return self.pii_middleware

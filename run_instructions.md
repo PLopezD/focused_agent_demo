@@ -21,9 +21,6 @@ DATABASE_PATH=./chinook.db
 ### 2. Run the Application
 
 ```bash
-# Make sure you're in the project directory
-cd /Users/pablolopezdomowicz/Desktop/inters/langchain_take_home_v1_codex
-
 # Run the Streamlit app
 streamlit run main.py
 ```

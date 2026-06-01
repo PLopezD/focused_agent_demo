@@ -2,4 +2,8 @@
 .langgraph_api/
 .vscode/
 __pycache__/
+.pytest_cache/
+.claude/
+source/
+path/
 
