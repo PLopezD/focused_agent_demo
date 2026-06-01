@@ -1,0 +1,138 @@
+"""
+Main application entry point for the Music Store Customer Support Bot.
+Includes LangSmith integration for monitoring and debugging.
+"""
+
+import os
+import streamlit as st
+from dotenv import load_dotenv
+from orchestrator import MusicStoreOrchestrator
+import uuid
+
+# Load environment variables
+load_dotenv()
+
+# Initialize LangSmith tracing
+os.environ["LANGCHAIN_TRACING_V2"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "music-store-support-bot"
+
+def main():
+    st.set_page_config(
+        page_title="Music Store Support Bot",
+        page_icon="🎵",
+        layout="wide"
+    )
+
+    st.title("🎵 Music Store Customer Support Bot")
+    st.markdown("*Powered by LangChain, LangGraph, and LangSmith*")
+
+    # Initialize orchestrator
+    if 'orchestrator' not in st.session_state:
+        st.session_state.orchestrator = MusicStoreOrchestrator(use_memory=True)
+
+    # Initialize session
+    if 'session_id' not in st.session_state:
+        st.session_state.session_id = str(uuid.uuid4())
+
+    # Check authentication status and display logged-in user
+    auth_status = st.session_state.orchestrator.get_authentication_status(st.session_state.session_id)
+    if auth_status["authenticated"] and auth_status["customer_email"]:
+        st.success(f"🔐 Logged in as: **{auth_status['customer_email']}**")
+    else:
+        st.info("👤 Not authenticated - provide your email to access personalized features")
+
+    # Sidebar with system info
+    with st.sidebar:
+        st.header("🏗️ System Architecture")
+        st.markdown("""
+        **Main Orchestrator** (LangGraph)
+        - Customer Authentication Layer
+        - Music Recommendation Agent
+        - Transaction Management Agent
+        - Customer Support Agent
+        - Escalation Handler
+
+        **Key Features:**
+        - 🔐 Secure customer authentication
+        - 🎵 Personalized music recommendations
+        - 📋 Order history and billing support
+        - 🤝 Human escalation when needed
+        - 📊 Full LangSmith monitoring
+        """)
+
+        st.header("🧪 Demo Instructions")
+        st.markdown("""
+        1. **Authenticate** with a customer email
+        2. **Try different queries:**
+           - "Recommend music like jazz"
+           - "Show my order history"
+           - "Help with my account"
+        3. **View** conversation flow in LangSmith Studio
+        """)
+
+        st.header("📊 Sample Customers")
+        st.markdown("""
+        - `luisg@embraer.com.br`
+        - `leonekohler@surfeu.de`
+        - `ftremblay@gmail.com`
+        - `bjorn.hansen@yahoo.no`
+        - `frantisekw@jetbrains.com`
+        """)
+
+    # Main chat interface
+    st.header("💬 Chat Interface")
+
+    # Always display welcome message as the first message
+    welcome_msg = """Welcome to our Music Store Customer Support! 🎵
+
+I can help you with:
+• **General music questions** and recommendations
+• **Account assistance** (provide your email for personalized help)
+• **Order inquiries** (authentication required)
+• **Technical support**
+
+How can I assist you today?"""
+
+    with st.chat_message("assistant"):
+        st.write(welcome_msg)
+
+    # Display conversation history
+    history = st.session_state.orchestrator.get_conversation_history(st.session_state.session_id)
+
+    if history:
+        for exchange in history:
+            if exchange["role"] == "user":
+                with st.chat_message("user"):
+                    st.write(exchange["content"])
+            elif exchange["role"] == "assistant":
+                with st.chat_message("assistant"):
+                    st.write(exchange["content"])
+
+    # Chat input
+    if prompt := st.chat_input("Type your message here..."):
+        # Display user message
+        with st.chat_message("user"):
+            st.write(prompt)
+
+        # Get bot response
+        with st.chat_message("assistant"):
+            with st.spinner("Processing..."):
+                response = st.session_state.orchestrator.chat(prompt, st.session_state.session_id)
+                st.write(response)
+
+    # Clear conversation button with dynamic text based on authentication
+    if auth_status["authenticated"]:
+        button_text = "🗑️ Clear Conversation (Logout)"
+    else:
+        button_text = "🗑️ Clear Conversation"
+
+    if st.button(button_text):
+        # Reset session
+        st.session_state.session_id = str(uuid.uuid4())
+        st.rerun()
+
+
+
+if __name__ == "__main__":
+    main()
+
