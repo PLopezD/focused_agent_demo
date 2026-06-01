@@ -264,13 +264,57 @@ class MusicStoreOrchestrator:
             result_state = self._execute_tavily_agent(state)
             return result_state
 
-        def authenticated_agent(state: ConversationState) -> ConversationState:
-            """Execute the authenticated agent."""
-            result_state = self._execute_authenticated_agent(state)
+        def authenticated_agent(state: ConversationState) -> str:
+            """Route authenticated users to the appropriate specialized agent."""
+            try:
+                # Set authenticated customer context for the auth agent
+                if state.authenticated and state.customer_id:
+                    self.auth_agent.set_authenticated_customer(state.customer_id)
+
+                # Use the authentication agent to determine routing
+                routing_result = self.auth_agent.route_request(
+                    messages=state.messages,
+                    customer_id=state.customer_id,
+                    customer_email=state.customer_email
+                )
+
+                agent_choice = routing_result.get("agent", "support")
+                confidence = routing_result.get("confidence", 0.0)
+                reasoning = routing_result.get("reasoning", "No reasoning provided")
+
+                # Log the routing decision for debugging
+                print(f"Auth agent routing: {agent_choice} (confidence: {confidence:.2f}) - {reasoning}")
+
+                # Return the routing decision for conditional edge
+                if agent_choice == "music":
+                    return "music_agent"
+                elif agent_choice == "transaction":
+                    return "transaction_agent"
+                else:  # Default to support for "support" or any unknown choice
+                    return "support_agent"
+
+            except Exception as e:
+                print(f"Error in authenticated agent routing: {e}")
+                # Fallback to support agent
+                return "support_agent"
+
+        def music_agent(state: ConversationState) -> ConversationState:
+            """Execute the music recommendation agent."""
+            result_state = self._execute_music_agent(state)
+            return result_state
+
+        def transaction_agent(state: ConversationState) -> ConversationState:
+            """Execute the transaction management agent."""
+            result_state = self._execute_transaction_agent(state)
+            return result_state
+
+        def support_agent(state: ConversationState) -> ConversationState:
+            """Execute the customer support agent."""
+            result_state = self._execute_support_agent(state)
             return result_state
 
         # Build the graph - use dict state for better serialization
-        
+
         workflow = StateGraph(ConversationState)
 
         # Add nodes
@@ -278,6 +322,9 @@ class MusicStoreOrchestrator:
         workflow.add_node("auth_check", check_authentication)
         workflow.add_node("fast_response", handle_fast_response)
         workflow.add_node("authenticated_agent", authenticated_agent)
+        workflow.add_node("music_agent", music_agent)
+        workflow.add_node("transaction_agent", transaction_agent)
+        workflow.add_node("support_agent", support_agent)
         workflow.add_node("tavily_rag_agent", tavily_rag_agent)
 
         # Add edges - with fast path optimization
@@ -299,8 +346,19 @@ class MusicStoreOrchestrator:
                 "tavily_rag_agent": "tavily_rag_agent"
             }
         )
+        workflow.add_conditional_edges(
+            "authenticated_agent",
+            lambda state: state,  # authenticated_agent now returns the routing decision directly
+            {
+                "music_agent": "music_agent",
+                "transaction_agent": "transaction_agent",
+                "support_agent": "support_agent"
+            }
+        )
         workflow.add_edge("fast_response", END)
-        workflow.add_edge("authenticated_agent", END)
+        workflow.add_edge("music_agent", END)
+        workflow.add_edge("transaction_agent", END)
+        workflow.add_edge("support_agent", END)
         workflow.add_edge("tavily_rag_agent", END)
 
         # Compile the workflow with memory for local execution
@@ -459,39 +517,6 @@ class MusicStoreOrchestrator:
 
         return state
 
-    def _execute_authenticated_agent(self, state: ConversationState) -> ConversationState:
-        """Execute the appropriate authenticated agent based on intelligent routing."""
-        try:
-            # Set authenticated customer context for the auth agent
-            if state.authenticated and state.customer_id:
-                self.auth_agent.set_authenticated_customer(state.customer_id)
-
-            # Use the authentication agent to determine routing
-            routing_result = self.auth_agent.route_request(
-                messages=state.messages,
-                customer_id=state.customer_id,
-                customer_email=state.customer_email
-            )
-
-            agent_choice = routing_result.get("agent", "support")
-            confidence = routing_result.get("confidence", 0.0)
-            reasoning = routing_result.get("reasoning", "No reasoning provided")
-
-            # Log the routing decision for debugging
-            print(f"Auth agent routing: {agent_choice} (confidence: {confidence:.2f}) - {reasoning}")
-
-            # Route to the appropriate specialized agent
-            if agent_choice == "music":
-                return self._execute_music_agent(state)
-            elif agent_choice == "transaction":
-                return self._execute_transaction_agent(state)
-            else:  # Default to support for "support" or any unknown choice
-                return self._execute_support_agent(state)
-
-        except Exception as e:
-            print(f"Error in authenticated agent routing: {e}")
-            # Fallback to support agent
-            return self._execute_support_agent(state)
 
     def _handle_escalation(self, state: ConversationState) -> ConversationState:
         """Handle escalation to human support."""
