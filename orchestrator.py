@@ -264,7 +264,7 @@ class MusicStoreOrchestrator:
             result_state = self._execute_tavily_agent(state)
             return result_state
 
-        def authenticated_agent(state: ConversationState) -> str:
+        def authenticated_agent(state: ConversationState) -> ConversationState:
             """Route authenticated users to the appropriate specialized agent."""
             try:
                 # Set authenticated customer context for the auth agent
@@ -285,17 +285,25 @@ class MusicStoreOrchestrator:
                 # Log the routing decision for debugging
                 print(f"Auth agent routing: {agent_choice} (confidence: {confidence:.2f}) - {reasoning}")
 
-                # Return the routing decision for conditional edge
-                if agent_choice == "music":
-                    return "music_agent"
-                elif agent_choice == "transaction":
-                    return "transaction_agent"
-                else:  # Default to support for "support" or any unknown choice
-                    return "support_agent"
+                # Store the routing decision in the state for the conditional edge
+                state.current_agent = agent_choice
+                return state
 
             except Exception as e:
                 print(f"Error in authenticated agent routing: {e}")
                 # Fallback to support agent
+                state.current_agent = "support"
+                return state
+
+        def route_to_subagent(state: ConversationState) -> str:
+            """Determine which subagent to route to based on the current_agent field."""
+            agent_choice = state.current_agent or "support"
+
+            if agent_choice == "music":
+                return "music_agent"
+            elif agent_choice == "transaction":
+                return "transaction_agent"
+            else:  # Default to support for "support" or any unknown choice
                 return "support_agent"
 
         def music_agent(state: ConversationState) -> ConversationState:
@@ -348,7 +356,7 @@ class MusicStoreOrchestrator:
         )
         workflow.add_conditional_edges(
             "authenticated_agent",
-            lambda state: state,  # authenticated_agent now returns the routing decision directly
+            route_to_subagent,
             {
                 "music_agent": "music_agent",
                 "transaction_agent": "transaction_agent",

@@ -56,13 +56,12 @@ def main():
         - Music Recommendation Agent
         - Transaction Management Agent
         - Customer Support Agent
-        - Escalation Handler
+        - Tavily RAG Agent (When not authenticated)
 
         **Key Features:**
         - 🔐 Secure customer authentication
         - 🎵 Personalized music recommendations
         - 📋 Order history and billing support
-        - 🤝 Human escalation when needed
         - 📊 Full LangSmith monitoring
         """)
 

@@ -68,8 +68,7 @@ class AuthenticationAgent:
             latest_message = user_messages[-1].content
 
             # Use LLM to intelligently classify the request
-            classification_prompt = f"""
-You are an intelligent routing agent for a digital music store. Analyze the user's request and determine which specialized agent should handle it.
+            classification_prompt = f"""You are an intelligent routing agent for a digital music store. Analyze the user's request and determine which specialized agent should handle it.
 
 User's request: "{latest_message}"
 
@@ -78,27 +77,47 @@ Available agents:
 2. **transaction** - Order history, purchases, billing, invoices, refunds, payment issues, spending analysis
 3. **support** - Account management, profile updates, technical support, escalation to human support
 
-Analyze the request and respond with ONLY a JSON object in this format:
-{{
-    "agent": "music|transaction|support",
-    "confidence": 0.0-1.0,
-    "reasoning": "Brief explanation of why this agent was chosen"
-}}
-
 Guidelines:
 - If the request mentions music, songs, albums, artists, genres, recommendations, or discovery → use "music"
 - If the request mentions orders, purchases, billing, invoices, payments, refunds, or spending → use "transaction"
 - If the request mentions account info, profile, support, help, problems, or escalation → use "support"
 - For ambiguous requests, choose the agent most likely to help and set confidence accordingly
 - Default to "support" for unclear or general requests
-"""
+
+IMPORTANT: You must respond with ONLY a valid JSON object. Do not include any markdown code blocks, explanations, or other text. Only return the JSON object:
+
+{{"agent": "music", "confidence": 0.9, "reasoning": "User is asking for music recommendations"}}
+
+Your response:"""
 
             try:
                 response = self.llm.invoke([SystemMessage(content=classification_prompt)])
+                response_content = response.content.strip()
 
                 # Parse the JSON response
                 import json
-                classification = json.loads(response.content.strip())
+
+                # Handle cases where the response might be wrapped in code blocks
+                if response_content.startswith("```json"):
+                    # Extract JSON from code block
+                    json_start = response_content.find('{')
+                    json_end = response_content.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        json_content = response_content[json_start:json_end]
+                    else:
+                        raise ValueError("No JSON object found in code block")
+                elif response_content.startswith('{') and response_content.endswith('}'):
+                    json_content = response_content
+                else:
+                    # Try to find JSON object within the response
+                    json_start = response_content.find('{')
+                    json_end = response_content.rfind('}') + 1
+                    if json_start >= 0 and json_end > json_start:
+                        json_content = response_content[json_start:json_end]
+                    else:
+                        raise ValueError(f"No valid JSON object found in response: {response_content}")
+
+                classification = json.loads(json_content)
 
                 state["routing_decision"] = classification.get("agent", "support")
                 state["confidence"] = float(classification.get("confidence", 0.5))
