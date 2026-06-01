@@ -3,11 +3,10 @@ Main Orchestrator using LangGraph for sophisticated agent routing and conversati
 Implements customer authentication and secure agent coordination.
 """
 
-import os
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-
+from typing import Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -16,6 +15,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel
 
 from database import DatabaseManager
+from helpers.system_messages import SYSTEM_MESSAGES
 from agents.music_agent import MusicRecommendationAgent
 from agents.transaction_agent import TransactionAgent
 from agents.support_agent import CustomerSupportAgent
@@ -43,21 +43,63 @@ class MusicStoreOrchestrator:
         self.music_agent = MusicRecommendationAgent(self.db, self.llm)
         self.transaction_agent = TransactionAgent(self.db, self.llm)
         self.support_agent = CustomerSupportAgent(self.db, self.llm)
-        self.tavily_agent = TavilyAgent(self.db, self.llm)
+        self.tavily_agent = TavilyAgent()
 
         # Build the conversation graph
         self.app = self._build_graph()
 
+    def _conversation_state_to_dict(self, conv_state: ConversationState) -> dict:
+        """Convert ConversationState to dictionary format for LangGraph."""
+        return {
+            "messages": conv_state.messages,
+            "customer_id": conv_state.customer_id,
+            "customer_email": conv_state.customer_email,
+            "authenticated": conv_state.authenticated,
+            "current_agent": conv_state.current_agent,
+            "context": conv_state.context,
+            "escalation_needed": conv_state.escalation_needed
+        }
+
+    def _add_error_message(self, state: ConversationState, agent_type: str, error: Exception) -> ConversationState:
+        """Add standardized error message to conversation state."""
+        error_messages = SYSTEM_MESSAGES["ERROR_MESSAGES"]
+
+        error_msg = error_messages.get(agent_type, error_messages["general"])
+        full_error_msg = f"{error_msg} Error: {str(error)}"
+
+        state.messages.append(AIMessage(content=full_error_msg))
+
+        # Set escalation flag for support errors
+        if agent_type in ["support", "general"]:
+            state.escalation_needed = True
+
+        return state
+
+    def _add_no_message_error(self, state: ConversationState) -> ConversationState:
+        """Add standardized 'no message received' error."""
+        state.messages.append(AIMessage(content=SYSTEM_MESSAGES["NO_MESSAGE_RECEIVED"]))
+        return state
+
+    def _format_error_message(self, agent_type: str, error: Exception) -> str:
+        """Format standardized error message for string returns."""
+        base_msg = SYSTEM_MESSAGES["GENERAL_ERROR"]
+        return f"{base_msg} Error: {str(error)}"
+
+    def _create_customer_context_message(self, state: ConversationState) -> SystemMessage:
+        """Create standardized customer context system message."""
+        customer_id = state.customer_id if state.customer_id else 'Not authenticated'
+        return SystemMessage(content=f"Customer ID: {customer_id}")
+
     def _build_graph(self):
         """Build the LangGraph state machine for conversation flow."""
 
-        def check_authentication(state: ConversationState) -> ConversationState:
+        def check_authentication(state: dict) -> dict:
             """Check for email in message and authenticate if found."""
             # If already authenticated, skip authentication process
-            if state.authenticated:
+            if state.get("authenticated", False):
                 return state
 
-            latest_message = state.messages[-1] if state.messages else None
+            latest_message = state.get("messages", [])[-1] if state.get("messages") else None
             if not latest_message or not isinstance(latest_message, HumanMessage):
                 return state
 
@@ -70,60 +112,70 @@ class MusicStoreOrchestrator:
                 potential_email = email_match.group()
                 customer = self.db.authenticate_customer(potential_email)
                 if customer:
-                    state.customer_id = customer['CustomerId']
-                    state.customer_email = customer['Email']
-                    state.authenticated = True
-                    state.context['customer_info'] = customer
+                    state["customer_id"] = customer['CustomerId']
+                    state["customer_email"] = customer['Email']
+                    state["authenticated"] = True
+                    if "context" not in state:
+                        state["context"] = {}
+                    state["context"]["customer_info"] = customer
 
-                    welcome_msg = f"Great! I've authenticated you as {customer['FirstName']} ({customer['Email']}). "
-                    welcome_msg += "Now I can provide personalized assistance with your account, orders, and music recommendations. "
-                    welcome_msg += "How can I help you today?"
+                    welcome_msg = SYSTEM_MESSAGES["AUTHENTICATION_SUCCESS"].format(
+                        first_name=customer['FirstName'],
+                        email=customer['Email']
+                    )
 
-                    state.messages.append(AIMessage(content=welcome_msg))
+                    state["messages"].append(AIMessage(content=welcome_msg))
                     return state
                 else:
-                    auth_failure_msg = f"I couldn't find an account with email '{potential_email}'. "
-                    auth_failure_msg += "You can still ask general questions about music, but I won't be able to access your account information."
-                    state.messages.append(AIMessage(content=auth_failure_msg))
+                    auth_failure_msg = SYSTEM_MESSAGES["AUTHENTICATION_FAILED"].format(email=potential_email)
+                    state["messages"].append(AIMessage(content=auth_failure_msg))
                     return state
 
             return state
 
-        def send_welcome_message(state: ConversationState) -> ConversationState:
+        def send_welcome_message(state: dict) -> dict:
             """Send welcome message only when appropriate."""
             # Only send welcome if there are no messages yet (empty session initialization)
-            if len(state.messages) == 0:
-                welcome_msg = """Welcome to our Music Store Customer Support! 🎵
-
-I can help you with:
-• **General music questions** and recommendations
-• **Account assistance** (provide your email for personalized help)
-• **Order inquiries** (authentication required)
-• **Technical support**
-
-How can I assist you today?"""
-                state.messages.append(AIMessage(content=welcome_msg))
+            if len(state.get("messages", [])) == 0:
+                welcome_msg = SYSTEM_MESSAGES["WELCOME"]
+                if "messages" not in state:
+                    state["messages"] = []
+                state["messages"].append(AIMessage(content=welcome_msg))
 
             return state
 
-        def should_continue_after_welcome(state: ConversationState) -> str:
+        def should_continue_after_welcome(state: dict) -> str:
             """Determine if we should continue processing or end after welcome."""
             # If we only have one message (the welcome message we just added), end here
-            if len(state.messages) == 1 and isinstance(state.messages[0], AIMessage):
+            messages = state.get("messages", [])
+            if len(messages) == 1 and isinstance(messages[0], AIMessage):
                 return 'end'
             # If we have user messages, continue with processing
             return 'continue'
 
-        def route_with_fast_path(state: ConversationState) -> str:
+        def route_with_fast_path(state: dict) -> str:
             """Check if we can use fast path, otherwise route to appropriate agent."""
-            latest_message = state.messages[-1] if state.messages else None
+            messages = state.get("messages", [])
+            latest_message = messages[-1] if messages else None
             if not latest_message or not isinstance(latest_message, HumanMessage):
-                if state.authenticated:
+                if state.get("authenticated", False):
                     return 'authenticated_agent'
                 else:
                     return 'tavily_rag_agent'
 
             message_lower = latest_message.content.lower()
+
+            # Check for account-related queries that should NEVER go to fast response when authenticated
+            account_related_patterns = [
+                'my account', 'account info', 'my profile', 'my orders', 'order history',
+                'my purchases', 'my invoices', 'my spending', 'my transactions',
+                'my support rep', 'support representative', 'escalate', 'billing'
+            ]
+
+            # If authenticated and asking about account-related things, route to authenticated agent
+            if state.get("authenticated", False) and any(pattern in message_lower for pattern in account_related_patterns):
+                print("routing to authenticated_agent (account-related)")
+                return 'authenticated_agent'
 
             # Simple greetings and common responses
             simple_patterns = [
@@ -136,95 +188,87 @@ How can I assist you today?"""
                 print("routing to fast_response")
                 return 'fast_response'
 
-            # Short messages under 20 chars likely simple
-            if len(latest_message.content.strip()) < 20:
+            # Short messages under 20 chars likely simple (but not if account-related)
+            if len(latest_message.content.strip()) < 20 and not any(pattern in message_lower for pattern in account_related_patterns):
                 print("routing to fast_response")
                 return 'fast_response'
 
             # Normal routing based on authentication
-            if state.authenticated:
+            if state.get("authenticated", False):
                 return 'authenticated_agent'
             else:
-                return 'tavily_agent'
+                return 'tavily_rag_agent'
 
-        def handle_fast_response(state: ConversationState) -> ConversationState:
-            """Handle simple responses with fast model and caching."""
-            latest_message = state.messages[-1] if state.messages else None
+        def handle_fast_response(state: dict) -> dict:
+            """Handle simple responses with fast model and caching, considering authentication state."""
+            messages = state.get("messages", [])
+            latest_message = messages[-1] if messages else None
             if not latest_message:
                 return state
 
             message_lower = latest_message.content.lower().strip()
 
-            # Check cache first
-            if message_lower in self.response_cache:
-                response = self.response_cache[message_lower]
-                state.messages.append(AIMessage(content=response))
+            # Create cache key that includes authentication status
+            auth_prefix = "auth_" if state.get("authenticated", False) else "unauth_"
+            cache_key = f"{auth_prefix}{message_lower}"
+
+            # Check cache first (with authentication context)
+            if cache_key in self.response_cache:
+                response = self.response_cache[cache_key]
+                state["messages"].append(AIMessage(content=response))
                 return state
 
-            # Pre-defined responses for common patterns (also cache these)
-            if 'hello' in message_lower or 'hi' in message_lower:
-                response = "Hello! How can I help you with your music needs today?"
-            elif 'thank' in message_lower:
-                response = "You're welcome! Is there anything else I can help you with?"
-            elif 'bye' in message_lower or 'goodbye' in message_lower:
-                response = "Goodbye! Feel free to come back if you need any music assistance!"
-            elif any(word in message_lower for word in ['help', 'what can you do', 'features', 'capabilities', 'what do you do', 'show features']):
-                response = """## 🎵 Music Store Support Bot Features
+            try:
+                if state.get("authenticated", False):
+                    customer_info = state.get("context", {}).get('customer_info', {})
+                    customer_name = customer_info.get('FirstName', '')
+                    customer_email = state.get("customer_email", "")
+                    system_msg = f"""You are a helpful music store assistant. The customer is authenticated as {customer_name} ({customer_email}).
+                    You can help with account-related questions, personalized recommendations, and order inquiries.
+                    Give brief, friendly, personalized responses."""
+                else:
+                    system_msg = """You are a helpful music store assistant. The customer is not authenticated yet.
+                    You can help with general music questions, but suggest they provide their email for personalized assistance.
+                    Give brief, friendly responses."""
 
-**🔐 Authentication & Account Management**
-- Secure customer authentication via email
-- Access to personalized account information
-- Order history and billing support
+                # Include recent conversation history for better context
+                context_messages = [SystemMessage(content=system_msg)]
 
-**🎵 Music Recommendations**
-- Personalized music suggestions based on preferences
-- Genre-based recommendations (jazz, rock, classical, etc.)
-- Artist and album discovery
+                # Add recent conversation history (last 3 messages for context)
+                recent_messages = messages[-3:] if len(messages) > 1 else [latest_message]
+                context_messages.extend(recent_messages)
 
-**💳 Transaction Support**
-- Order history lookup
-- Invoice and billing inquiries
-- Payment and purchase assistance
+                fast_response = self.fast_llm.invoke(context_messages)
+                response = fast_response.content
+            except Exception as e:
+                if state.get("authenticated", False):
+                    response = "I'd be happy to help with your account! Could you please tell me more about what you need?"
+                else:
+                    response = "I'd be happy to help! Could you please tell me more about what you need? (Provide your email for personalized account assistance)"
 
-**🤝 Customer Support**
-- General music store inquiries
-- Technical support and troubleshooting
-- Human escalation when needed
+            # Cache the response with authentication context (limit cache size)
+            if len(self.response_cache) < 200:  # Increased cache size to account for auth variants
+                self.response_cache[cache_key] = response
 
-**🛡️ Advanced Architecture**
-- Built with LangGraph for sophisticated conversation management
-- LangSmith integration for monitoring and debugging
-- Memory-enabled conversations for better context
-
-How can I assist you today?"""
-            else:
-                # Use fast model for other simple queries
-                try:
-                    system_msg = "You are a helpful music store assistant. Give brief, friendly responses."
-                    messages = [SystemMessage(content=system_msg), latest_message]
-                    fast_response = self.fast_llm.invoke(messages)
-                    response = fast_response.content
-                except:
-                    response = "I'd be happy to help! Could you please tell me more about what you need?"
-
-            # Cache the response for future use (limit cache size)
-            if len(self.response_cache) < 100:
-                self.response_cache[message_lower] = response
-
-            state.messages.append(AIMessage(content=response))
+            state["messages"].append(AIMessage(content=response))
             return state
 
 
-        def tavily_rag_agent(state: ConversationState) -> ConversationState:
+        def tavily_rag_agent(state: dict) -> dict:
             """Execute the tavily agent."""
-            return self._execute_tavily_agent(state)
+            conv_state = ConversationState(**state)
+            result_state = self._execute_tavily_agent(conv_state)
+            return self._conversation_state_to_dict(result_state)
 
-        def authenticated_agent(state: ConversationState) -> ConversationState:
+        def authenticated_agent(state: dict) -> dict:
             """Execute the authenticated agent."""
-            return self._execute_authenticated_agent(state)
+            conv_state = ConversationState(**state)
+            result_state = self._execute_authenticated_agent(conv_state)
+            return self._conversation_state_to_dict(result_state)
 
-        # Build the graph
-        workflow = StateGraph(ConversationState)
+        # Build the graph - use dict state for better serialization
+        
+        workflow = StateGraph(Dict[str, Any])
 
         # Add nodes
         workflow.add_node("welcome", send_welcome_message)
@@ -268,31 +312,33 @@ How can I assist you today?"""
     def _execute_tavily_agent(self, state: ConversationState) -> ConversationState:
         """Execute the tavily agent."""
         try:
-            # Convert ConversationState to GraphState format expected by TavilyAgent
-            graph_state = {
-                "messages": state.messages,
-                "original_question": "",
-                "attempted_search_queries": []
-            }
+            # Get the latest user message
+            user_messages = [msg for msg in state.messages if isinstance(msg, HumanMessage)]
+            if not user_messages:
+                return self._add_no_message_error(state)
 
-            # Invoke the tavily agent
-            result = self.tavily_agent.invoke(graph_state)
+            latest_message = user_messages[-1].content
 
-            # Update the conversation state with the results
+            # Use the enhanced TavilyAgent search method
+            import asyncio
+            result = asyncio.run(self.tavily_agent.search(latest_message))
+
+            # Extract the AI response from the result
             if isinstance(result, dict) and "messages" in result:
-                # Only add new AI messages from the result
-                new_messages = result["messages"]
-                for msg in new_messages:
-                    if hasattr(msg, 'type') and msg.type in ['ai', 'assistant']:
-                        state.messages.append(msg)
+                # Get the final AI message from the search result
+                ai_messages = [msg for msg in result["messages"] if hasattr(msg, 'type') and msg.type == 'ai']
+                if ai_messages:
+                    state.messages.append(ai_messages[-1])
+                else:
+                    # If no AI message found, create a generic response
+                    state.messages.append(AIMessage(content=SYSTEM_MESSAGES["SEARCH_NO_CLEAR_RESPONSE"]))
+            else:
+                state.messages.append(AIMessage(content=SYSTEM_MESSAGES["SEARCH_NO_CLEAR_RESPONSE"]))
 
             return state
 
         except Exception as e:
-            from langchain_core.messages import AIMessage
-            error_msg = f"I apologize, but I encountered an error while searching for information. Please try again. Error: {str(e)}"
-            state.messages.append(AIMessage(content=error_msg))
-            return state
+            return self._add_error_message(state, "tavily", e)
 
     def _execute_music_agent(self, state: ConversationState) -> ConversationState:
         """Execute the music recommendation agent."""
@@ -306,13 +352,12 @@ How can I assist you today?"""
             # Get the latest user message
             user_messages = [msg for msg in state.messages if isinstance(msg, HumanMessage)]
             if not user_messages:
-                state.messages.append(AIMessage(content="I didn't receive a valid message to process."))
-                return state
+                return self._add_no_message_error(state)
 
             # Prepare input with customer context and system message
             messages = [
                 self.music_agent.get_system_message(),
-                SystemMessage(content=f"Customer ID: {state.customer_id if state.customer_id else 'Not authenticated'}"),
+                self._create_customer_context_message(state),
                 user_messages[-1]  # Latest user message
             ]
 
@@ -327,13 +372,17 @@ How can I assist you today?"""
                 state.messages.append(AIMessage(content=response))
 
         except Exception as e:
-            state.messages.append(AIMessage(content=f"I apologize, but I encountered an error while processing your music request. Please try again or contact support. Error: {str(e)}"))
+            return self._add_error_message(state, "music", e)
 
         return state
 
     def _execute_transaction_agent(self, state: ConversationState) -> ConversationState:
         """Execute the transaction management agent."""
         try:
+            # Set authenticated customer context if available
+            if state.authenticated and state.customer_id:
+                self.transaction_agent.set_authenticated_customer(state.customer_id)
+
             # Create agent executor with tools
             agent_executor = create_react_agent(
                 self.llm,
@@ -343,13 +392,12 @@ How can I assist you today?"""
             # Get the latest user message
             user_messages = [msg for msg in state.messages if isinstance(msg, HumanMessage)]
             if not user_messages:
-                state.messages.append(AIMessage(content="I didn't receive a valid message to process."))
-                return state
+                return self._add_no_message_error(state)
 
             # Prepare input with customer context and system message
             messages = [
                 self.transaction_agent.get_system_message(),
-                SystemMessage(content=f"Customer ID: {state.customer_id}"),
+                self._create_customer_context_message(state),
                 user_messages[-1]  # Latest user message
             ]
 
@@ -364,59 +412,47 @@ How can I assist you today?"""
                 state.messages.append(AIMessage(content=response))
 
         except Exception as e:
-            state.messages.append(AIMessage(content=f"I apologize, but I encountered an error while processing your transaction request. Please try again or contact support. Error: {str(e)}"))
+            return self._add_error_message(state, "transaction", e)
 
         return state
 
     def _execute_support_agent(self, state: ConversationState) -> ConversationState:
-        """Execute the customer support agent using ToolNode."""
+        """Execute the customer support agent."""
         try:
-            # Create ToolNode with support agent tools
-            tools = self.support_agent.get_tools()
-            tool_node = ToolNode(tools=tools)
+            # Set authenticated customer context if available
+            if state.authenticated and state.customer_id:
+                self.support_agent.set_authenticated_customer(state.customer_id)
+
+            # Create agent executor with tools - same pattern as transaction agent
+            agent_executor = create_react_agent(
+                self.llm,
+                self.support_agent.get_tools()
+            )
 
             # Get the latest user message
             user_messages = [msg for msg in state.messages if isinstance(msg, HumanMessage)]
             if not user_messages:
-                state.messages.append(AIMessage(content="I didn't receive a valid message to process."))
-                return state
+                return self._add_no_message_error(state)
 
-            # Prepare messages with system context and customer info
+            # Prepare input with customer context and system message
             messages = [
                 self.support_agent.get_system_message(),
-                SystemMessage(content=f"Customer ID: {state.customer_id if state.customer_id else 'Not authenticated'}"),
+                self._create_customer_context_message(state),
                 user_messages[-1]  # Latest user message
             ]
 
-            # Use LLM to process the request and decide if tools are needed
-            llm_response = self.llm.bind_tools(tools).invoke(messages)
+            agent_input = {"messages": messages}
 
-            # If the LLM wants to use tools, execute them
-            if llm_response.tool_calls:
-                # Add the LLM response to messages
-                messages.append(llm_response)
+            # Execute agent
+            result = agent_executor.invoke(agent_input)
 
-                # Execute tools using ToolNode
-                tool_state = {"messages": messages}
-                tool_result = tool_node.invoke(tool_state)
-
-                # Get the tool results and generate final response
-                messages_with_tool_results = tool_result["messages"]
-                final_response = self.llm.invoke(messages_with_tool_results)
-
-                state.messages.append(AIMessage(content=final_response.content))
-            else:
-                # No tools needed, use the LLM response directly
-                state.messages.append(AIMessage(content=llm_response.content))
-
-            # Check for escalation triggers
-            response_content = state.messages[-1].content
-            if "escalat" in response_content.lower():
-                state.escalation_needed = True
+            # Extract response
+            if result.get("messages"):
+                response = result["messages"][-1].content
+                state.messages.append(AIMessage(content=response))
 
         except Exception as e:
-            state.messages.append(AIMessage(content=f"I apologize, but I encountered an error while processing your support request. Please try again or let me escalate this to a human representative. Error: {str(e)}"))
-            state.escalation_needed = True
+            return self._add_error_message(state, "support", e)
 
         return state
 
@@ -426,7 +462,7 @@ How can I assist you today?"""
             # Get the latest user message to determine routing
             user_messages = [msg for msg in state.messages if isinstance(msg, HumanMessage)]
             if not user_messages:
-                state.messages.append(AIMessage(content="I didn't receive a valid message to process."))
+                state.messages.append(AIMessage(content=SYSTEM_MESSAGES["NO_MESSAGE_RECEIVED"]))
                 return state
 
             latest_message = user_messages[-1].content.lower()
@@ -458,8 +494,7 @@ How can I assist you today?"""
                 return self._execute_support_agent(state)
 
         except Exception as e:
-            state.messages.append(AIMessage(content=f"I apologize, but I encountered an error while processing your request. Please try again or contact support. Error: {str(e)}"))
-            return state
+            return self._add_error_message(state, "general", e)
 
     def _handle_escalation(self, state: ConversationState) -> ConversationState:
         """Handle escalation to human support."""
@@ -480,50 +515,70 @@ In the meantime, is there anything else I can help you with today?
             # Only send welcome if this is a truly new session
             if not current_state.values:
                 # Just return the welcome message directly without invoking the full workflow
-                welcome_msg = """Welcome to our Music Store Customer Support! 🎵
-
-I can help you with:
-• **General music questions** and recommendations
-• **Account assistance** (provide your email for personalized help)
-• **Order inquiries** (authentication required)
-• **Technical support**
-
-How can I assist you today?"""
+                welcome_msg = SYSTEM_MESSAGES["WELCOME"]
                 return welcome_msg
 
             # Session already exists, return empty string
             return ""
 
         except Exception as e:
-            return f"I apologize, but I encountered an error. Please try again or contact support directly. Error: {str(e)}"
+            return self._format_error_message("general", e)
 
     def chat(self, message: str, session_id: str = "default") -> str:
         """Main chat interface."""
         try:
-            # Get current state
             config = {"configurable": {"thread_id": session_id}}
-            current_state = self.app.get_state(config)
 
-            # Create new state if none exists, but don't send welcome here
-            if not current_state.values:
-                state = ConversationState()
+            # Handle different memory modes
+            if self.use_memory:
+                # Get current state from checkpoint
+                current_state = self.app.get_state(config)
+                if current_state.values:
+                    state_values = current_state.values
+                    state = ConversationState(
+                        messages=state_values.get('messages', []),
+                        customer_id=state_values.get('customer_id'),
+                        customer_email=state_values.get('customer_email'),
+                        authenticated=state_values.get('authenticated', False),
+                        current_agent=state_values.get('current_agent'),
+                        context=state_values.get('context', {}),
+                        escalation_needed=state_values.get('escalation_needed', False)
+                    )
+                else:
+                    state = ConversationState()
             else:
-                state = ConversationState(**current_state.values)
+                # No memory mode - create fresh state
+                state = ConversationState()
 
             # Add user message
             state.messages.append(HumanMessage(content=message))
+
+            # Convert state to dict for LangGraph
+            state_dict = {
+                "messages": state.messages,
+                "customer_id": state.customer_id,
+                "customer_email": state.customer_email,
+                "authenticated": state.authenticated,
+                "current_agent": state.current_agent,
+                "context": state.context,
+                "escalation_needed": state.escalation_needed
+            }
+
             # Process through the graph
-            result = self.app.invoke(state, config)
-            # Extract the final state (result should be dict with our state fields)
-            if isinstance(result, dict):
-                final_state = ConversationState(**result)
-                ai_messages = [msg for msg in final_state.messages if isinstance(msg, AIMessage)]
-                return ai_messages[-1].content if ai_messages else "I'm sorry, I couldn't process your request."
+            if self.use_memory:
+                result = self.app.invoke(state_dict, config)
             else:
-                return "I'm sorry, I couldn't process your request."
+                result = self.app.invoke(state_dict)
+
+            # Extract the final state
+            if isinstance(result, dict) and "messages" in result:
+                ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+                return ai_messages[-1].content if ai_messages else SYSTEM_MESSAGES["REQUEST_PROCESSING_ERROR"]
+            else:
+                return SYSTEM_MESSAGES["REQUEST_PROCESSING_ERROR"]
 
         except Exception as e:
-            return f"I apologize, but I encountered an error. Please try again or contact support directly. Error: {str(e)}"
+            return self._format_error_message("general", e)
 
     def get_conversation_history(self, session_id: str = "default") -> List[Dict[str, str]]:
         """Get conversation history for a session."""

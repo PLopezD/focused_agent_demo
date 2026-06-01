@@ -5,8 +5,10 @@ Includes LangSmith integration for monitoring and debugging.
 
 import os
 import streamlit as st
+from random import randrange
 from dotenv import load_dotenv
 from orchestrator import MusicStoreOrchestrator
+from helpers.system_messages import SYSTEM_MESSAGES
 import uuid
 
 # Load environment variables
@@ -24,7 +26,6 @@ def main():
     )
 
     st.title("🎵 Music Store Customer Support Bot")
-    st.markdown("*Powered by LangChain, LangGraph, and LangSmith*")
 
     # Initialize orchestrator
     if 'orchestrator' not in st.session_state:
@@ -32,7 +33,7 @@ def main():
 
     # Initialize session
     if 'session_id' not in st.session_state:
-        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.session_id = str(randrange(10000, 100000))
 
     # Check authentication status and display logged-in user
     auth_status = st.session_state.orchestrator.get_authentication_status(st.session_state.session_id)
@@ -83,18 +84,8 @@ def main():
     st.header("💬 Chat Interface")
 
     # Always display welcome message as the first message
-    welcome_msg = """Welcome to our Music Store Customer Support! 🎵
-
-I can help you with:
-• **General music questions** and recommendations
-• **Account assistance** (provide your email for personalized help)
-• **Order inquiries** (authentication required)
-• **Technical support**
-
-How can I assist you today?"""
-
     with st.chat_message("assistant"):
-        st.write(welcome_msg)
+        st.write(SYSTEM_MESSAGES["WELCOME"])
 
     # Display conversation history
     history = st.session_state.orchestrator.get_conversation_history(st.session_state.session_id)
@@ -110,6 +101,9 @@ How can I assist you today?"""
 
     # Chat input
     if prompt := st.chat_input("Type your message here..."):
+        # Check authentication status before the message
+        auth_before = st.session_state.orchestrator.get_authentication_status(st.session_state.session_id)
+
         # Display user message
         with st.chat_message("user"):
             st.write(prompt)
@@ -120,6 +114,16 @@ How can I assist you today?"""
                 response = st.session_state.orchestrator.chat(prompt, st.session_state.session_id)
                 st.write(response)
 
+        # Check if authentication status changed and trigger rerun
+        auth_after = st.session_state.orchestrator.get_authentication_status(st.session_state.session_id)
+        if auth_before["authenticated"] != auth_after["authenticated"]:
+            if auth_after["authenticated"]:
+                # User just got authenticated - show success message and rerun
+                st.success(f"✅ Successfully authenticated as {auth_after['customer_email']}!")
+                st.balloons()  # Celebration animation
+            # Authentication status changed, rerun to update UI immediately
+            st.rerun()
+
     # Clear conversation button with dynamic text based on authentication
     if auth_status["authenticated"]:
         button_text = "🗑️ Clear Conversation (Logout)"
@@ -128,7 +132,7 @@ How can I assist you today?"""
 
     if st.button(button_text):
         # Reset session
-        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.session_id = str(randrange(10000, 100000))
         st.rerun()
 
 

@@ -7,21 +7,26 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from database import DatabaseManager
+from helpers.system_messages import SYSTEM_MESSAGES
 from datetime import datetime
 
 class TransactionAgent:
     def __init__(self, db_manager: DatabaseManager, llm: ChatOpenAI):
         self.db = db_manager
         self.llm = llm
+        self.authenticated_customer_id = None  # Will be set when processing authenticated requests
 
         # Create tool functions with closure over self.db
         @tool
-        def get_order_history(customer_id: int, limit: int = 20) -> str:
-            """Get customer's complete order history with invoice summaries."""
-            purchases = self.db.get_customer_purchases(customer_id)
+        def get_order_history(limit: int = 20) -> str:
+            """Get your complete order history with invoice summaries."""
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_ORDER_HISTORY"]
+
+            purchases = self.db.get_customer_purchases(self.authenticated_customer_id)
 
             if not purchases:
-                return "No order history found for this customer."
+                return SYSTEM_MESSAGES["NO_ORDER_HISTORY"]
 
             # Group by invoice
             invoices = {}
@@ -55,12 +60,15 @@ class TransactionAgent:
             return result
 
         @tool
-        def get_invoice_details(invoice_id: int, customer_id: int) -> str:
+        def get_invoice_details(invoice_id: int) -> str:
             """Get detailed information for a specific invoice."""
-            invoice = self.db.get_invoice_details(invoice_id, customer_id)
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_INVOICE_DETAILS"]
+
+            invoice = self.db.get_invoice_details(invoice_id, self.authenticated_customer_id)
 
             if not invoice:
-                return f"Invoice #{invoice_id} not found or doesn't belong to this customer."
+                return SYSTEM_MESSAGES["INVOICE_NOT_FOUND"].format(invoice_id=invoice_id)
 
             result = f"**Invoice #{invoice['InvoiceId']} Details**\n\n"
             result += f"Date: {invoice['InvoiceDate']}\n"
@@ -85,12 +93,15 @@ class TransactionAgent:
             return result
 
         @tool
-        def get_spending_summary(customer_id: int) -> str:
-            """Get customer's spending summary and statistics."""
-            purchases = self.db.get_customer_purchases(customer_id)
+        def get_spending_summary() -> str:
+            """Get your spending summary and statistics."""
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_SPENDING_SUMMARY"]
+
+            purchases = self.db.get_customer_purchases(self.authenticated_customer_id)
 
             if not purchases:
-                return "No purchase history available for spending analysis."
+                return SYSTEM_MESSAGES["NO_SPENDING_HISTORY"]
 
             # Calculate statistics
             total_spent = sum(p['UnitPrice'] * p['Quantity'] for p in purchases)
@@ -116,12 +127,15 @@ class TransactionAgent:
             return result
 
         @tool
-        def check_recent_orders(customer_id: int, days: int = 30) -> str:
-            """Check for recent orders within specified number of days."""
-            purchases = self.db.get_customer_purchases(customer_id)
+        def check_recent_orders(days: int = 30) -> str:
+            """Check for your recent orders within specified number of days."""
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_RECENT_ORDERS"]
+
+            purchases = self.db.get_customer_purchases(self.authenticated_customer_id)
 
             if not purchases:
-                return "No recent orders found."
+                return SYSTEM_MESSAGES["NO_RECENT_ORDERS"]
 
             # Filter recent purchases (simplified - assumes date format)
             recent_invoices = {}
@@ -135,7 +149,7 @@ class TransactionAgent:
                     }
 
             if not recent_invoices:
-                return f"No orders found in the last {days} days."
+                return SYSTEM_MESSAGES["NO_ORDERS_IN_TIMEFRAME"].format(days=days)
 
             result = f"**Recent Orders (Last {days} days):**\n\n"
             for invoice in list(recent_invoices.values())[:5]:
@@ -152,16 +166,26 @@ class TransactionAgent:
         ]
 
     def get_system_message(self) -> SystemMessage:
-        return SystemMessage(content="""
+        auth_context = ""
+        if self.authenticated_customer_id:
+            auth_context = f"""
+IMPORTANT: The customer is authenticated (Customer ID: {self.authenticated_customer_id}).
+When they ask about "my orders", "my purchases", "my invoices", "my spending", etc., assume they are asking about their OWN account.
+Do NOT ask for customer ID or clarification - the tools will automatically use their authenticated account.
+"""
+
+        return SystemMessage(content=f"""
 You are a transaction and billing specialist for a digital music store. You help customers with their order history, invoice details, refunds, and billing inquiries.
 
+{auth_context}
+
 Your capabilities:
-- Retrieve and explain order history
-- Provide detailed invoice information
-- Calculate spending summaries and statistics
+- Retrieve and explain order history (for authenticated users)
+- Provide detailed invoice information (for authenticated users)
+- Calculate spending summaries and statistics (for authenticated users)
 - Help with billing address updates
 - Assist with refund and return processes
-- Track recent purchase activity
+- Track recent purchase activity (for authenticated users)
 
 Guidelines:
 - Be professional and helpful with billing matters
@@ -170,7 +194,7 @@ Guidelines:
 - Provide exact invoice details when requested
 - Help customers understand their purchase patterns
 - Escalate complex billing disputes to human support when needed
-- Always verify invoice ownership before sharing details
+- For authenticated users: assume transaction-related questions refer to THEIR account
 
 For refunds and disputes:
 - Acknowledge the customer's concern
@@ -181,6 +205,10 @@ For refunds and disputes:
 
 Use the available tools to get accurate transaction data for each customer query.
 """)
+
+    def set_authenticated_customer(self, customer_id: int):
+        """Set the authenticated customer ID for context-aware tool responses."""
+        self.authenticated_customer_id = customer_id
 
     def get_tools(self):
         """Return the list of tools available to this agent."""

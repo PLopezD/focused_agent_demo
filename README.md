@@ -1,16 +1,23 @@
-pip install tavily-python && pip freeze > requirements.txt
+pip install pytest pytest-asyncio && pip freeze > requirements.txt
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
+pytest tests/test_auth.py -v
+pytest tests/ -v -s --tb=short
+pytest tests/ -v
+
+
 pgrep -a lang
 
 
-tradeoff 
+tradeoff:
     - why gpt-4o-mini?
     - ive done rag differently - with embeddings
+    - semantic search on queries for routtings w llms vs keyword search
+    - Predictability vs. Agent Autonomy
     
-learnings
+learnings:
     - i had never done the PII stuff
 
 with more time 
@@ -18,3 +25,15 @@ with more time
     - improve flow of tool selection, right now doing string search is not great
     - summarization after 15-20 messages 
     - spent more time with our database patterns including using something like postgres 
+    - code cleanup
+    - add middleware for non-dry things
+
+
+PLD todo 
+- find out why rag is not further filtering when it has a good answer
+- write dockerfile 
+- add pii middleware
+- add eval dataset
+- sort out music suggestion algo 
+
+- CALL BANDON (can be pushed)

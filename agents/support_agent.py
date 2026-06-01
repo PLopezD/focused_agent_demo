@@ -7,28 +7,33 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
 from database import DatabaseManager
+from helpers.system_messages import SYSTEM_MESSAGES
 
 class CustomerSupportAgent:
     def __init__(self, db_manager: DatabaseManager, llm: ChatOpenAI):
         self.db = db_manager
         self.llm = llm
+        self.authenticated_customer_id = None  # Will be set when processing authenticated requests
 
         # Create tool functions with closure over self.db
         @tool
-        def get_account_info(customer_id: int) -> str:
-            """Get customer account information and profile details."""
-            # Get customer info (assuming it's available from auth context)
+        def get_account_info() -> str:
+            """Get your account information and profile details."""
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_ACCOUNT_INFO"]
+
+            # Get customer info using authenticated customer ID
             with self.db.get_connection() as conn:
                 cursor = conn.execute("""
                     SELECT CustomerId, FirstName, LastName, Email, Company,
                            Address, City, State, Country, PostalCode, Phone
                     FROM Customer
                     WHERE CustomerId = ?
-                """, (customer_id,))
+                """, (self.authenticated_customer_id,))
 
                 customer = cursor.fetchone()
                 if not customer:
-                    return "Customer account not found."
+                    return SYSTEM_MESSAGES["CUSTOMER_NOT_FOUND"]
 
                 result = "**Your Account Information:**\n\n"
                 result += f"Name: {customer['FirstName']} {customer['LastName']}\n"
@@ -53,19 +58,22 @@ class CustomerSupportAgent:
                 return result
 
         @tool
-        def get_support_rep_contact(customer_id: int) -> str:
-            """Get assigned support representative contact information."""
+        def get_support_rep_contact() -> str:
+            """Get your assigned support representative contact information."""
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_SUPPORT_REP"]
+
             with self.db.get_connection() as conn:
                 cursor = conn.execute("""
                     SELECT e.FirstName, e.LastName, e.Email, e.Phone, e.Title
                     FROM Customer c
                     JOIN Employee e ON c.SupportRepId = e.EmployeeId
                     WHERE c.CustomerId = ?
-                """, (customer_id,))
+                """, (self.authenticated_customer_id,))
 
                 rep = cursor.fetchone()
                 if not rep:
-                    return "No dedicated support representative assigned to your account."
+                    return SYSTEM_MESSAGES["NO_SUPPORT_REP"]
 
                 result = "**Your Assigned Support Representative:**\n\n"
                 result += f"Name: {rep['FirstName']} {rep['LastName']}\n"
@@ -78,10 +86,13 @@ class CustomerSupportAgent:
                 return result
 
         @tool
-        def escalate_to_human(customer_id: int, issue_description: str) -> str:
+        def escalate_to_human(issue_description: str) -> str:
             """Escalate customer issue to human support representative."""
+            if not self.authenticated_customer_id:
+                return SYSTEM_MESSAGES["AUTH_REQUIRED_ESCALATION"]
+
             # Get support rep info
-            rep_info = self.db.get_support_rep_info(customer_id)
+            rep_info = self.db.get_support_rep_info(self.authenticated_customer_id)
 
             result = "**Escalating to Human Support**\n\n"
             result += f"Issue: {issue_description}\n\n"
@@ -94,7 +105,7 @@ class CustomerSupportAgent:
                 result += "Your case has been escalated to our general support team.\n"
                 result += "A support representative will contact you within 24 hours.\n"
 
-            result += f"\nCase Reference: CASE-{customer_id}-{hash(issue_description) % 10000:04d}\n"
+            result += f"\nCase Reference: CASE-{self.authenticated_customer_id}-{hash(issue_description) % 10000:04d}\n"
             result += "Please keep this reference number for your records."
 
             return result
@@ -102,15 +113,7 @@ class CustomerSupportAgent:
         @tool
         def store_information(query: str = "") -> str:
             """Provide general store information, policies, and FAQ responses."""
-            info_responses = {
-                "hours": "Our digital music store is available 24/7 for purchases and downloads. Customer support is available Monday-Friday 9AM-6PM EST.",
-                "refund": "Refund Policy: Digital music purchases can be refunded within 14 days if there was a technical issue preventing download. Contact your support rep for assistance.",
-                "formats": "We offer music in MP3 format (320 kbps) compatible with all devices and platforms.",
-                "download": "After purchase, you can download your music immediately. Downloads are available for 30 days after purchase.",
-                "account": "You can update your account information, billing address, and password through your account settings.",
-                "payment": "We accept major credit cards (Visa, MasterCard, American Express) and PayPal.",
-                "quality": "All tracks are high-quality MP3s encoded at 320 kbps for excellent sound quality."
-            }
+            info_responses = SYSTEM_MESSAGES["STORE_INFO"]
 
             query_lower = query.lower()
             for key, response in info_responses.items():
@@ -118,16 +121,7 @@ class CustomerSupportAgent:
                     return f"**{key.title()} Information:**\n{response}"
 
             # General store info
-            return """**Digital Music Store Information:**
-
-• **Store Hours:** 24/7 for purchases, Support: Mon-Fri 9AM-6PM EST
-• **Music Format:** High-quality MP3 (320 kbps)
-• **Payment:** Major credit cards and PayPal accepted
-• **Downloads:** Available immediately after purchase for 30 days
-• **Refunds:** 14-day policy for technical issues
-• **Account Management:** Update details in your account settings
-
-For specific questions about our policies or technical issues, please let me know how I can help!"""
+            return SYSTEM_MESSAGES["STORE_INFO_GENERAL"]
 
         # Store tools as instance attributes
         self.tools = [
@@ -138,11 +132,21 @@ For specific questions about our policies or technical issues, please let me kno
         ]
 
     def get_system_message(self) -> SystemMessage:
-        return SystemMessage(content="""
+        auth_context = ""
+        if self.authenticated_customer_id:
+            auth_context = f"""
+IMPORTANT: The customer is authenticated (Customer ID: {self.authenticated_customer_id}).
+When they ask about "my account", "my profile", "my support rep", etc., assume they are asking about their OWN account.
+Do NOT ask for customer ID or clarification - the tools will automatically use their authenticated account.
+"""
+
+        return SystemMessage(content=f"""
 You are a customer support specialist for a digital music store. You handle general inquiries, account management, and escalation to human representatives when needed.
 
+{auth_context}
+
 Your capabilities:
-- Provide account information and profile details
+- Provide account information and profile details (for authenticated users)
 - Connect customers with their assigned support representatives
 - Escalate complex issues to human support
 - Answer questions about store policies, hours, and general information
@@ -155,6 +159,7 @@ Guidelines:
 - Know when to escalate issues beyond your capabilities
 - Follow up to ensure customer satisfaction
 - Be proactive in offering additional assistance
+- For authenticated users: assume account-related questions refer to THEIR account
 
 When to escalate to human support:
 - Technical issues beyond basic troubleshooting
@@ -166,6 +171,10 @@ When to escalate to human support:
 
 Always ensure customers feel heard and supported, even when escalating to human representatives.
 """)
+
+    def set_authenticated_customer(self, customer_id: int):
+        """Set the authenticated customer ID for context-aware tool responses."""
+        self.authenticated_customer_id = customer_id
 
     def get_tools(self):
         """Return the list of tools available to this agent."""
