@@ -4,7 +4,7 @@ Includes customer data isolation and security controls.
 """
 
 import sqlite3
-from typing import List, Dict, Any, Optional
+from typing import List, Any, Optional
 from contextlib import contextmanager
 import os
 from dotenv import load_dotenv
@@ -25,7 +25,7 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def authenticate_customer(self, email: str) -> Optional[Dict[str, Any]]:
+    def authenticate_customer(self, email: str) -> Optional[dict[str, Any]]:
         """Authenticate customer by email and return customer info."""
         with self.get_connection() as conn:
             cursor = conn.execute("""
@@ -38,7 +38,7 @@ class DatabaseManager:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_customer_purchases(self, customer_id: int) -> List[Dict[str, Any]]:
+    def get_customer_purchases(self, customer_id: int) -> List[dict[str, Any]]:
         """Get all purchases for a specific customer."""
         with self.get_connection() as conn:
             cursor = conn.execute("""
@@ -60,7 +60,7 @@ class DatabaseManager:
 
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_customer_genres(self, customer_id: int) -> List[Dict[str, Any]]:
+    def get_customer_genres(self, customer_id: int) -> List[dict[str, Any]]:
         """Get customer's preferred genres based on purchase history."""
         with self.get_connection() as conn:
             cursor = conn.execute("""
@@ -79,7 +79,7 @@ class DatabaseManager:
 
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_recommendations_by_genre(self, genres: List[str], customer_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_recommendations_by_genre(self, genres: List[str], customer_id: int, limit: int = 10) -> List[dict[str, Any]]:
         """Get track recommendations based on genres, excluding already purchased tracks."""
         placeholders = ','.join('?' for _ in genres)
 
@@ -105,7 +105,7 @@ class DatabaseManager:
 
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_invoice_details(self, invoice_id: int, customer_id: int) -> Optional[Dict[str, Any]]:
+    def get_invoice_details(self, invoice_id: int, customer_id: int) -> Optional[dict[str, Any]]:
         """Get invoice details for a specific customer (security: customer_id validation)."""
         with self.get_connection() as conn:
             # First verify the invoice belongs to the customer
@@ -153,7 +153,7 @@ class DatabaseManager:
 
             return invoice_data
 
-    def search_tracks(self, query: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def search_tracks(self, query: str, limit: int = 20) -> List[dict[str, Any]]:
         """Search tracks by name, artist, or album."""
         search_term = f"%{query}%"
 
@@ -175,7 +175,7 @@ class DatabaseManager:
 
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_support_rep_info(self, support_rep_id: int) -> Optional[Dict[str, Any]]:
+    def get_support_rep_info(self, support_rep_id: int) -> Optional[dict[str, Any]]:
         """Get support representative information."""
         with self.get_connection() as conn:
             cursor = conn.execute("""

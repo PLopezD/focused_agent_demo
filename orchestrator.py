@@ -4,9 +4,8 @@ Implements customer authentication and secure agent coordination.
 """
 
 import re
-from typing import Dict, Any, List, Optional
+from typing import Any, List, Optional
 from datetime import datetime
-from typing import Dict, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
@@ -20,6 +19,7 @@ from agents.music_agent import MusicRecommendationAgent
 from agents.transaction_agent import TransactionAgent
 from agents.support_agent import CustomerSupportAgent
 from agents.tavily_agent import TavilyAgent
+from agents.auth_agent import AuthenticationAgent
 
 class ConversationState(BaseModel):
     """State management for the conversation flow."""
@@ -28,7 +28,7 @@ class ConversationState(BaseModel):
     customer_email: Optional[str] = None
     authenticated: bool = False
     current_agent: Optional[str] = None
-    context: Dict[str, Any] = {}
+    context: dict[str, Any] = {}
     escalation_needed: bool = False
 
 class MusicStoreOrchestrator:
@@ -44,6 +44,14 @@ class MusicStoreOrchestrator:
         self.transaction_agent = TransactionAgent(self.db, self.llm)
         self.support_agent = CustomerSupportAgent(self.db, self.llm)
         self.tavily_agent = TavilyAgent()
+
+        # Initialize authentication agent with error handling
+        try:
+            self.auth_agent = AuthenticationAgent(self.llm)
+        except Exception as e:
+            print(f"Warning: AuthenticationAgent failed to initialize: {e}")
+            print("Using fallback mode for routing")
+            self.auth_agent = AuthenticationAgent(llm=None)  # Fallback mode
 
         # Build the conversation graph
         self.app = self._build_graph()
@@ -93,13 +101,13 @@ class MusicStoreOrchestrator:
     def _build_graph(self):
         """Build the LangGraph state machine for conversation flow."""
 
-        def check_authentication(state: dict) -> dict:
+        def check_authentication(state: ConversationState) -> ConversationState:
             """Check for email in message and authenticate if found."""
             # If already authenticated, skip authentication process
-            if state.get("authenticated", False):
+            if state.authenticated:
                 return state
 
-            latest_message = state.get("messages", [])[-1] if state.get("messages") else None
+            latest_message = state.messages[-1] if state.messages else None
             if not latest_message or not isinstance(latest_message, HumanMessage):
                 return state
 
@@ -112,53 +120,49 @@ class MusicStoreOrchestrator:
                 potential_email = email_match.group()
                 customer = self.db.authenticate_customer(potential_email)
                 if customer:
-                    state["customer_id"] = customer['CustomerId']
-                    state["customer_email"] = customer['Email']
-                    state["authenticated"] = True
-                    if "context" not in state:
-                        state["context"] = {}
-                    state["context"]["customer_info"] = customer
+                    state.customer_id = customer['CustomerId']
+                    state.customer_email = customer['Email']
+                    state.authenticated = True
+                    state.context["customer_info"] = customer
 
                     welcome_msg = SYSTEM_MESSAGES["AUTHENTICATION_SUCCESS"].format(
                         first_name=customer['FirstName'],
                         email=customer['Email']
                     )
 
-                    state["messages"].append(AIMessage(content=welcome_msg))
+                    state.messages.append(AIMessage(content=welcome_msg))
                     return state
                 else:
                     auth_failure_msg = SYSTEM_MESSAGES["AUTHENTICATION_FAILED"].format(email=potential_email)
-                    state["messages"].append(AIMessage(content=auth_failure_msg))
+                    state.messages.append(AIMessage(content=auth_failure_msg))
                     return state
 
             return state
 
-        def send_welcome_message(state: dict) -> dict:
+        def send_welcome_message(state: ConversationState) -> ConversationState:
             """Send welcome message only when appropriate."""
             # Only send welcome if there are no messages yet (empty session initialization)
-            if len(state.get("messages", [])) == 0:
+            if len(state.messages) == 0:
                 welcome_msg = SYSTEM_MESSAGES["WELCOME"]
-                if "messages" not in state:
-                    state["messages"] = []
-                state["messages"].append(AIMessage(content=welcome_msg))
+                state.messages.append(AIMessage(content=welcome_msg))
 
             return state
 
-        def should_continue_after_welcome(state: dict) -> str:
+        def should_continue_after_welcome(state: ConversationState) -> str:
             """Determine if we should continue processing or end after welcome."""
             # If we only have one message (the welcome message we just added), end here
-            messages = state.get("messages", [])
+            messages = state.messages
             if len(messages) == 1 and isinstance(messages[0], AIMessage):
                 return 'end'
             # If we have user messages, continue with processing
             return 'continue'
 
-        def route_with_fast_path(state: dict) -> str:
+        def route_with_fast_path(state: ConversationState) -> str:
             """Check if we can use fast path, otherwise route to appropriate agent."""
-            messages = state.get("messages", [])
+            messages = state.messages
             latest_message = messages[-1] if messages else None
             if not latest_message or not isinstance(latest_message, HumanMessage):
-                if state.get("authenticated", False):
+                if state.authenticated:
                     return 'authenticated_agent'
                 else:
                     return 'tavily_rag_agent'
@@ -173,7 +177,7 @@ class MusicStoreOrchestrator:
             ]
 
             # If authenticated and asking about account-related things, route to authenticated agent
-            if state.get("authenticated", False) and any(pattern in message_lower for pattern in account_related_patterns):
+            if state.authenticated and any(pattern in message_lower for pattern in account_related_patterns):
                 print("routing to authenticated_agent (account-related)")
                 return 'authenticated_agent'
 
@@ -194,14 +198,14 @@ class MusicStoreOrchestrator:
                 return 'fast_response'
 
             # Normal routing based on authentication
-            if state.get("authenticated", False):
+            if state.authenticated:
                 return 'authenticated_agent'
             else:
                 return 'tavily_rag_agent'
 
-        def handle_fast_response(state: dict) -> dict:
+        def handle_fast_response(state: ConversationState) -> ConversationState:
             """Handle simple responses with fast model and caching, considering authentication state."""
-            messages = state.get("messages", [])
+            messages = state.messages
             latest_message = messages[-1] if messages else None
             if not latest_message:
                 return state
@@ -209,20 +213,20 @@ class MusicStoreOrchestrator:
             message_lower = latest_message.content.lower().strip()
 
             # Create cache key that includes authentication status
-            auth_prefix = "auth_" if state.get("authenticated", False) else "unauth_"
+            auth_prefix = "auth_" if state.authenticated else "unauth_"
             cache_key = f"{auth_prefix}{message_lower}"
 
             # Check cache first (with authentication context)
             if cache_key in self.response_cache:
                 response = self.response_cache[cache_key]
-                state["messages"].append(AIMessage(content=response))
+                state.messages.append(AIMessage(content=response))
                 return state
 
             try:
-                if state.get("authenticated", False):
-                    customer_info = state.get("context", {}).get('customer_info', {})
+                if state.authenticated:
+                    customer_info = state.context.get('customer_info', {})
                     customer_name = customer_info.get('FirstName', '')
-                    customer_email = state.get("customer_email", "")
+                    customer_email = state.customer_email or ""
                     system_msg = f"""You are a helpful music store assistant. The customer is authenticated as {customer_name} ({customer_email}).
                     You can help with account-related questions, personalized recommendations, and order inquiries.
                     Give brief, friendly, personalized responses."""
@@ -241,7 +245,7 @@ class MusicStoreOrchestrator:
                 fast_response = self.fast_llm.invoke(context_messages)
                 response = fast_response.content
             except Exception as e:
-                if state.get("authenticated", False):
+                if state.authenticated:
                     response = "I'd be happy to help with your account! Could you please tell me more about what you need?"
                 else:
                     response = "I'd be happy to help! Could you please tell me more about what you need? (Provide your email for personalized account assistance)"
@@ -250,25 +254,23 @@ class MusicStoreOrchestrator:
             if len(self.response_cache) < 200:  # Increased cache size to account for auth variants
                 self.response_cache[cache_key] = response
 
-            state["messages"].append(AIMessage(content=response))
+            state.messages.append(AIMessage(content=response))
             return state
 
 
-        def tavily_rag_agent(state: dict) -> dict:
+        def tavily_rag_agent(state: ConversationState) -> ConversationState:
             """Execute the tavily agent."""
-            conv_state = ConversationState(**state)
-            result_state = self._execute_tavily_agent(conv_state)
-            return self._conversation_state_to_dict(result_state)
+            result_state = self._execute_tavily_agent(state)
+            return result_state
 
-        def authenticated_agent(state: dict) -> dict:
+        def authenticated_agent(state: ConversationState) -> ConversationState:
             """Execute the authenticated agent."""
-            conv_state = ConversationState(**state)
-            result_state = self._execute_authenticated_agent(conv_state)
-            return self._conversation_state_to_dict(result_state)
+            result_state = self._execute_authenticated_agent(state)
+            return result_state
 
         # Build the graph - use dict state for better serialization
         
-        workflow = StateGraph(Dict[str, Any])
+        workflow = StateGraph(ConversationState)
 
         # Add nodes
         workflow.add_node("welcome", send_welcome_message)
@@ -320,18 +322,11 @@ class MusicStoreOrchestrator:
             latest_message = user_messages[-1].content
 
             # Use the enhanced TavilyAgent search method
-            import asyncio
-            result = asyncio.run(self.tavily_agent.search(latest_message))
+            result = self.tavily_agent.search(latest_message)
 
-            # Extract the AI response from the result
-            if isinstance(result, dict) and "messages" in result:
-                # Get the final AI message from the search result
-                ai_messages = [msg for msg in result["messages"] if hasattr(msg, 'type') and msg.type == 'ai']
-                if ai_messages:
-                    state.messages.append(ai_messages[-1])
-                else:
-                    # If no AI message found, create a generic response
-                    state.messages.append(AIMessage(content=SYSTEM_MESSAGES["SEARCH_NO_CLEAR_RESPONSE"]))
+            # The search method returns a string response directly
+            if isinstance(result, str) and result.strip():
+                state.messages.append(AIMessage(content=result))
             else:
                 state.messages.append(AIMessage(content=SYSTEM_MESSAGES["SEARCH_NO_CLEAR_RESPONSE"]))
 
@@ -343,6 +338,10 @@ class MusicStoreOrchestrator:
     def _execute_music_agent(self, state: ConversationState) -> ConversationState:
         """Execute the music recommendation agent."""
         try:
+            # Set authenticated customer context if available
+            if state.authenticated and state.customer_id:
+                self.music_agent.set_authenticated_customer(state.customer_id)
+
             # Create agent executor with tools (without system_message parameter)
             agent_executor = create_react_agent(
                 self.llm,
@@ -457,44 +456,38 @@ class MusicStoreOrchestrator:
         return state
 
     def _execute_authenticated_agent(self, state: ConversationState) -> ConversationState:
-        """Execute the appropriate authenticated agent based on the user's request."""
+        """Execute the appropriate authenticated agent based on intelligent routing."""
         try:
-            # Get the latest user message to determine routing
-            user_messages = [msg for msg in state.messages if isinstance(msg, HumanMessage)]
-            if not user_messages:
-                state.messages.append(AIMessage(content=SYSTEM_MESSAGES["NO_MESSAGE_RECEIVED"]))
-                return state
+            # Set authenticated customer context for the auth agent
+            if state.authenticated and state.customer_id:
+                self.auth_agent.set_authenticated_customer(state.customer_id)
 
-            latest_message = user_messages[-1].content.lower()
+            # Use the authentication agent to determine routing
+            routing_result = self.auth_agent.route_request(
+                messages=state.messages,
+                customer_id=state.customer_id,
+                customer_email=state.customer_email
+            )
 
-            # Route to transaction agent for order/billing/purchase related queries
-            transaction_keywords = [
-                'order', 'invoice', 'purchase', 'billing', 'payment', 'receipt',
-                'transaction', 'bought', 'buy', 'paid', 'refund', 'charge',
-                'history', 'previous orders', 'my orders'
-            ]
+            agent_choice = routing_result.get("agent", "support")
+            confidence = routing_result.get("confidence", 0.0)
+            reasoning = routing_result.get("reasoning", "No reasoning provided")
 
-            # Route to customer support agent for account/general support
-            support_keywords = [
-                'account', 'profile', 'information', 'update', 'change',
-                'help', 'support', 'problem', 'issue', 'contact', 'phone',
-                'address', 'email', 'password', 'login', 'escalate'
-            ]
+            # Log the routing decision for debugging
+            print(f"Auth agent routing: {agent_choice} (confidence: {confidence:.2f}) - {reasoning}")
 
-            # Check for transaction-related queries first
-            if any(keyword in latest_message for keyword in transaction_keywords):
+            # Route to the appropriate specialized agent
+            if agent_choice == "music":
+                return self._execute_music_agent(state)
+            elif agent_choice == "transaction":
                 return self._execute_transaction_agent(state)
-
-            # Check for support-related queries
-            elif any(keyword in latest_message for keyword in support_keywords):
-                return self._execute_support_agent(state)
-
-            # For ambiguous queries, use the support agent as default since it's more general
-            else:
+            else:  # Default to support for "support" or any unknown choice
                 return self._execute_support_agent(state)
 
         except Exception as e:
-            return self._add_error_message(state, "general", e)
+            print(f"Error in authenticated agent routing: {e}")
+            # Fallback to support agent
+            return self._execute_support_agent(state)
 
     def _handle_escalation(self, state: ConversationState) -> ConversationState:
         """Handle escalation to human support."""
@@ -580,7 +573,7 @@ In the meantime, is there anything else I can help you with today?
         except Exception as e:
             return self._format_error_message("general", e)
 
-    def get_conversation_history(self, session_id: str = "default") -> List[Dict[str, str]]:
+    def get_conversation_history(self, session_id: str = "default") -> List[dict[str, str]]:
         """Get conversation history for a session."""
         try:
             config = {"configurable": {"thread_id": session_id}}
@@ -601,7 +594,7 @@ In the meantime, is there anything else I can help you with today?
         except Exception as e:
             return [{"role": "error", "content": f"Error retrieving history: {str(e)}"}]
 
-    def get_authentication_status(self, session_id: str = "default") -> Dict[str, Any]:
+    def get_authentication_status(self, session_id: str = "default") -> dict[str, Any]:
         """Get current authentication status for a session."""
         try:
             config = {"configurable": {"thread_id": session_id}}

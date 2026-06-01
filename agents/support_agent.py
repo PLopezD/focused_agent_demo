@@ -2,7 +2,7 @@
 Customer Support Agent - General support, account management, and escalation handling.
 """
 
-from typing import Dict, Any, List
+from typing import Any, List
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
@@ -114,7 +114,7 @@ class CustomerSupportAgent:
         def store_information(query: str = "") -> str:
             """Provide general store information, policies, and FAQ responses."""
             info_responses = SYSTEM_MESSAGES["STORE_INFO"]
-
+            
             query_lower = query.lower()
             for key, response in info_responses.items():
                 if key in query_lower:

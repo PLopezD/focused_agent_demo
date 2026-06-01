@@ -29,7 +29,12 @@ def main():
 
     # Initialize orchestrator
     if 'orchestrator' not in st.session_state:
-        st.session_state.orchestrator = MusicStoreOrchestrator(use_memory=True)
+        try:
+            st.session_state.orchestrator = MusicStoreOrchestrator(use_memory=True)
+        except Exception as e:
+            st.error(f"Failed to initialize orchestrator: {e}")
+            st.error("Please check your environment variables and API keys.")
+            st.stop()
 
     # Initialize session
     if 'session_id' not in st.session_state:

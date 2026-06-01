@@ -2,7 +2,7 @@
 Music Recommendation Agent - Specialized for music discovery and personalized recommendations.
 """
 
-from typing import Dict, Any, List
+from typing import Any, List
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage

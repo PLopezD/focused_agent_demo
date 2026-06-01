@@ -9,6 +9,8 @@ pytest tests/ -v
 
 
 pgrep -a lang
+pgrep -li lang
+
 
 
 tradeoff:
@@ -30,10 +32,11 @@ with more time
 
 
 PLD todo 
-- find out why rag is not further filtering when it has a good answer
-- write dockerfile 
-- add pii middleware
-- add eval dataset
-- sort out music suggestion algo 
+- find out why rag is not further filtering when it has a good answer --- xxxx
+- write dockerfile ---
+- add pii middleware --- 
+- add eval dataset --- 
+- sort out music suggestion algo - xxxx
+
 
 - CALL BANDON (can be pushed)

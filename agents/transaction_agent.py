@@ -2,7 +2,7 @@
 Transaction Management Agent - Specialized for order history, billing, and purchase support.
 """
 
-from typing import Dict, Any, List
+from typing import Any, List
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
@@ -18,7 +18,7 @@ class TransactionAgent:
 
         # Create tool functions with closure over self.db
         @tool
-        def get_order_history(limit: int = 20) -> str:
+        def get_order_history(limit: int = 10) -> str:
             """Get your complete order history with invoice summaries."""
             if not self.authenticated_customer_id:
                 return SYSTEM_MESSAGES["AUTH_REQUIRED_ORDER_HISTORY"]
