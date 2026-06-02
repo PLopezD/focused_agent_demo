@@ -1,6 +1,6 @@
 #  LangChain Music Store Customer Support Bot
 
-A sophisticated customer support application built with LangGraph, featuring specialized agents for music recommendations, transaction management, and customer support with comprehensive PII protection.
+A customer support application built with LangGraph, featuring specialized agents for music recommendations, transaction management, and customer support with comprehensive PII protection.
 
 ##  Quick Start with Docker
 
@@ -27,10 +27,17 @@ docker build -t langchain-music-store .
 docker run -p 8501:8501 langchain-music-store
 ```
 
-The application will be available at `http://localhost:8501`
+##  Quick Start with CLI 
 
-## Design Notes:
-- I chose to develop a support bot for a digital music store. I found a database with customers/employees/songs/albums/invoices etc online and thought it was a nice complete set of data that suited a chatbot well. This could be used for any business of course, it uses a tavily agent as well for additional web searching with a RAG relevance check on the responses, I wanted unauthenticated users to have some capabilities. Authentication is just done by inputting an email, since this is just a demo app this seemed fine but would need to be updated in production. Once authed it has several tools to look up user specific data around transactions and music recomendations. PII redaction is used to ensure the address, telephone and zip code are never returned for the user when querying for customer data. The country/state of the user is returned however as that felt more general. I created a dataset around returning order history which has some evals checking to make sure we have appropriate information in the final message. 
+- Set ENV values just like Docker
+
+```
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run main.py
+```
+
+The application will be available at `http://localhost:8501`
 
 ## System Architecture
 
@@ -82,7 +89,7 @@ Use these customer emails for testing:
 3. **Order History**: "Show me my order history" or "What did I purchase last month?"
 4. **General Support**: "Help with my account" or "Update my profile information"
 
-## =' Development
+## Development
 
 ### Environment Setup
 The application requires the following environment variables:
@@ -110,10 +117,10 @@ The system includes comprehensive PII middleware that:
 - Ensures financial data remains visible for transaction history
 
 ### Future Improvements
-- Make embeddings to go along with my rag architecture 
-- Improve flow of tool selection, right now doing string search is not great
+- Make embeddings to go along with my RAG architecture 
+- Improve flow of tool selection, right now additional latency from another LLM call here is not great
 - Summarization/Condensing node after message length gets too long
-- Spent more time with our database patterns including using something like Postgres to allow for more tools 
+- Spend more time with our database patterns including using something like Postgres to allow for more tools/vectorization
 - Code cleanup (class inheritence for shared values in agents, be more DRY, various middlewares for authorization)
 - Use an ORM for DB queries
 
