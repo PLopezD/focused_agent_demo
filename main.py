@@ -20,12 +20,12 @@ os.environ["LANGCHAIN_PROJECT"] = "music-store-support-bot"
 
 def main():
     st.set_page_config(
-        page_title="Music Store Support Bot",
+        page_title="Music Store Support Agent",
         page_icon="🎵",
         layout="wide"
     )
 
-    st.title("🎵 Music Store Customer Support Bot")
+    st.title("🎵 Music Store Customer Support Agent")
 
     # Initialize orchestrator
     if 'orchestrator' not in st.session_state:

@@ -1,4 +1,4 @@
-#  LangChain Music Store Customer Support Bot
+#  Music Store Customer Support Agent
 
 A customer support application built with LangGraph, featuring specialized agents for music recommendations, transaction management, and customer support with comprehensive PII protection.
 
@@ -31,9 +31,12 @@ docker run -p 8501:8501 langchain-music-store
 
 - Set ENV values just like Docker
 
-```
+```bash
+# Activate Python Virtual Environment 
 source .venv/bin/activate
+# Install dependancies
 pip install -r requirements.txt
+# Run app 
 streamlit run main.py
 ```
 
@@ -42,7 +45,7 @@ The application will be available at `http://localhost:8501`
 ## System Architecture
 
 ### Main Components
-- **Customer Authentication Layer** - Secure email-based authentication
+- **Customer Authentication Layer** - Secure email-based authentication 
 - **Music Recommendation Agent** - Personalized music discovery and recommendations
 - **Transaction Management Agent** - Order history and billing support
 - **Customer Support Agent** - General account assistance and escalation
@@ -69,7 +72,7 @@ The agent goes from welcome to authenticated or not. Depending on authentication
 ![Tavily Agent Graph](tavily_graph.png)
 
 **Notes:**
-If a user is not logged in they can do a Tavily RAG search which searches the web for answers and filters them out by relevance to try to find the right answer. A query is made to the Tavily API and the results are passed through a relevance filter to ensure they are valid and pertain to modern day responses. The relevent responses are then additionally queried to ensure they are helpful towards the response of the question. We use LLM as a judge for relevence and helpfulness checks. There's a max limit of 2 cycles of information to ensure a somewhat timely response(I didn't want anything to take more than 60 seconds).
+If a user is not logged in they can do a Tavily RAG search which searches the web for answers and filters them out by relevance to try to find the right answer. A query is made to the Tavily API and the results are passed through a relevance filter to ensure they are valid and pertain to modern day responses. The relevent responses are then additionally queried to ensure they are helpful towards the response of the question. We use LLM as a judge for relevence and helpfulness checks. There's a max limit of 2 cycles of information to ensure a somewhat timely response(I didn't want anything to take more than 60 seconds). The reason I went with this LLM as a judge with relevance and helpfulness checks as my RAG filtering rather than a vector store similarity search is because I didn't want to constantly be serializing new documents on every web search request. This felt expensive both in time and compute, also given the variability of the document types it didn't fit my structure. Typically you can do pre-vectorization of your PDFs and text documents allowing for simple similarity search. 
 
 ---
 
