@@ -26,7 +26,7 @@ def get_model():
 
 current_date = datetime.now().strftime("%A, %B %d, %Y")
 
-MAX_SEARCH_RETRIES = 3
+MAX_SEARCH_RETRIES = 2
 
 
 class GraphState(MessagesState):

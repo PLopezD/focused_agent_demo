@@ -78,11 +78,10 @@ class TransactionAgent:
             result += f"Date: {invoice['InvoiceDate']}\n"
             result += f"Total: ${invoice['Total']:.2f}\n\n"
 
-            if invoice.get('BillingAddress'):
-                result += "**Billing Address:**\n"
-                result += f"{invoice['BillingAddress']}\n"
-                result += f"{invoice['BillingCity']}, {invoice['BillingState']} {invoice.get('BillingPostalCode', '')}\n"
-                result += f"{invoice['BillingCountry']}\n\n"
+            if invoice.get('BillingCountry'):
+                result += "**Billing Information:**\n"
+                # Note: Specific billing address removed for privacy protection
+                result += f"Country: {invoice['BillingCountry']}\n\n"
 
             result += "**Items Purchased:**\n"
             total_items = 0

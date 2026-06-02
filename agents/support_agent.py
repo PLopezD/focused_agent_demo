@@ -47,14 +47,8 @@ class CustomerSupportAgent:
                     result += f"Company: {customer['Company']}\n"
 
                 result += "\n**Contact Information:**\n"
-                if customer['Address']:
-                    result += f"Address: {customer['Address']}\n"
-                    result += f"City: {customer['City']}\n"
-                    if customer['State']:
-                        result += f"State: {customer['State']}\n"
-                    result += f"Country: {customer['Country']}\n"
-                    if customer['PostalCode']:
-                        result += f"Postal Code: {customer['PostalCode']}\n"
+                # Note: Address information removed for privacy protection
+                result += f"Country: {customer['Country']}\n"
 
                 if customer['Phone']:
                     result += f"Phone: {customer['Phone']}\n"
